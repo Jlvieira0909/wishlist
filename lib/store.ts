@@ -3,7 +3,7 @@ import { localDatabase } from "./storage/local";
 import { redisDatabase } from "./storage/redis";
 import type { Database } from "./storage/shared";
 
-export { downloadImage, readLocalImage, removeImage, saveImage } from "./storage/images";
+export { downloadImage, readStoredFile, removeImage, saveImage } from "./storage/images";
 
 export type SetupProblem = "redis" | "blob";
 

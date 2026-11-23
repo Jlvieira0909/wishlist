@@ -23,7 +23,7 @@ Rode `npm run dev` e abra http://localhost:3000. Sem configurar nada, a lista e 
 2. Em **Settings > Environment Variables**, crie `GARIMPO_PASSWORD` com a senha que você vai usar para entrar.
 3. Na aba **Storage** do projeto:
    - crie um banco **Redis** (Upstash ou Redis Cloud, de preferência na região de São Paulo) e conecte ao projeto. Isso cria a variável `REDIS_URL`;
-   - crie um **Blob store** e conecte ao projeto. Isso cria a variável `BLOB_READ_WRITE_TOKEN`.
+   - crie um **Blob store** (público ou privado, tanto faz) e conecte ao projeto. Isso cria a variável `BLOB_READ_WRITE_TOKEN`. Num store privado, as fotos só abrem por dentro do app, depois da senha.
 4. Faça um novo deploy (aba Deployments, menu do último deploy, Redeploy).
 
 O `vercel.json` já coloca as funções em São Paulo (`gru1`): perto de você e fora dos EUA, de onde o CSSBUY recusa alguns acessos. Se o app abrir mostrando o que falta configurar, é só seguir a lista da tela.

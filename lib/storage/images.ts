@@ -1,22 +1,28 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { del, put } from "@vercel/blob";
+import { del, get, put } from "@vercel/blob";
 import { blobEnabled, onVercel } from "../env";
 import { IMAGES_DIR } from "../paths";
 import { DESKTOP_UA, messageOf } from "../scraper/extract";
 
 // Fotos: no Vercel Blob quando BLOB_READ_WRITE_TOKEN existe; senão em data/images (modo local).
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
-const LOCAL_PREFIX = "/api/images/";
-const LOCAL_FILE = /^[a-f0-9-]{36}-[a-f0-9]{6}\.(?:jpg|png|webp|gif|avif)$/;
+const ROUTE_PREFIX = "/api/images/";
+const BLOB_FOLDER = "garimpo/";
+const IMAGE_FILE = /^[a-f0-9-]{36}-[a-f0-9]{6}\.(?:jpg|png|webp|gif|avif)$/;
+const DEBUG_FILE = /^debug-[a-z-]+\.(?:png|json|html\.txt)$/;
 const MIME: Record<string, string> = {
   jpg: "image/jpeg",
   png: "image/png",
   webp: "image/webp",
   gif: "image/gif",
   avif: "image/avif",
+  json: "application/json; charset=utf-8",
+  txt: "text/plain; charset=utf-8",
 };
+
+const typeOf = (file: string) => MIME[file.split(".").pop() ?? ""] ?? "application/octet-stream";
 
 function detectImageType(data: Buffer): string | null {
   if (data.length < 12) return null;
@@ -28,7 +34,52 @@ function detectImageType(data: Buffer): string | null {
   return null;
 }
 
-/** Guarda a foto e devolve o endereço para mostrar na tela. */
+// ---------------------------------------------------------------------------
+// Blob público ou privado: o tipo é escolhido ao criar o store na Vercel e o código
+// não tem como saber de antemão. Tenta privado, depois público, e lembra o que funcionou.
+// ---------------------------------------------------------------------------
+
+type Access = "public" | "private";
+const globals = globalThis as typeof globalThis & { __garimpoBlobAccess?: Access };
+
+async function putBlob(
+  pathname: string,
+  data: Buffer | string,
+  options: { contentType: string; maxAge: number; overwrite?: boolean },
+): Promise<{ url: string; access: Access }> {
+  const known = globals.__garimpoBlobAccess;
+  const order: Access[] = known ? [known, known === "private" ? "public" : "private"] : ["private", "public"];
+  let firstError: unknown = null;
+  for (const access of order) {
+    try {
+      const blob = await put(pathname, data, {
+        access,
+        contentType: options.contentType,
+        addRandomSuffix: false,
+        allowOverwrite: options.overwrite ?? false,
+        cacheControlMaxAge: options.maxAge,
+      });
+      globals.__garimpoBlobAccess = access;
+      return { url: blob.url, access };
+    } catch (error) {
+      firstError ??= error;
+    }
+  }
+  throw firstError;
+}
+
+/** Com VERCEL_BLOB_API_URL (um emulador local do Blob, usado em testes), lê dele em vez da Vercel. */
+function blobTarget(pathname: string): string {
+  const override = process.env.VERCEL_BLOB_API_URL?.trim();
+  return override ? new URL(pathname, override.endsWith("/") ? override : `${override}/`).toString() : pathname;
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Guarda a foto e devolve o endereço para mostrar na tela.
+ * Blob público: o link do próprio Blob. Blob privado ou modo local: /api/images/..., que exige a senha.
+ */
 export async function saveImage(itemId: string, data: Buffer): Promise<string> {
   if (data.length > MAX_IMAGE_BYTES) throw new Error("a imagem passa de 15 MB");
   const extension = detectImageType(data);
@@ -36,19 +87,15 @@ export async function saveImage(itemId: string, data: Buffer): Promise<string> {
   const name = `${itemId}-${randomBytes(3).toString("hex")}.${extension}`;
 
   if (blobEnabled()) {
-    const blob = await put(`garimpo/${name}`, data, {
-      access: "public",
-      contentType: MIME[extension],
-      addRandomSuffix: false,
-      cacheControlMaxAge: 31_536_000, // o nome muda quando a foto é trocada
-    });
-    return blob.url;
+    // o nome muda quando a foto é trocada, então pode ficar em cache por um ano
+    const { url, access } = await putBlob(BLOB_FOLDER + name, data, { contentType: MIME[extension], maxAge: 31_536_000 });
+    return access === "public" ? url : ROUTE_PREFIX + name;
   }
   if (onVercel()) throw new Error("conecte um Vercel Blob ao projeto para salvar fotos");
 
   await fs.mkdir(IMAGES_DIR, { recursive: true });
   await fs.writeFile(path.join(IMAGES_DIR, name), data);
-  return `${LOCAL_PREFIX}${name}`;
+  return ROUTE_PREFIX + name;
 }
 
 export async function downloadImage(url: string, itemId: string): Promise<string> {
@@ -68,18 +115,37 @@ export async function removeImage(url: string | null): Promise<void> {
       if (blobEnabled()) await del(url);
       return;
     }
-    const file = url.startsWith(LOCAL_PREFIX) ? url.slice(LOCAL_PREFIX.length) : url;
-    if (LOCAL_FILE.test(file)) await fs.rm(path.join(IMAGES_DIR, file), { force: true });
+    const file = url.startsWith(ROUTE_PREFIX) ? url.slice(ROUTE_PREFIX.length) : url;
+    if (!IMAGE_FILE.test(file)) return;
+    if (blobEnabled()) await del(BLOB_FOLDER + file);
+    await fs.rm(path.join(IMAGES_DIR, file), { force: true });
   } catch (error) {
     console.warn(`[garimpo] não consegui apagar a foto antiga (${messageOf(error)})`);
   }
 }
 
-export async function readLocalImage(file: string): Promise<{ data: Buffer; type: string } | null> {
-  if (!LOCAL_FILE.test(file)) return null;
+export type StoredFile = {
+  body: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer>;
+  type: string;
+  /** prints de depuração são sobrescritos, então não podem ficar em cache */
+  debug: boolean;
+};
+
+/** Lê um arquivo para a rota /api/images: do Blob privado ou da pasta data/images. */
+export async function readStoredFile(file: string): Promise<StoredFile | null> {
+  const debug = DEBUG_FILE.test(file);
+  if (!debug && !IMAGE_FILE.test(file)) return null;
+
+  if (blobEnabled()) {
+    try {
+      const result = await get(blobTarget(BLOB_FOLDER + file), { access: "private" });
+      if (result?.statusCode === 200) return { body: result.stream, type: result.blob.contentType || typeOf(file), debug };
+    } catch (error) {
+      console.warn(`[garimpo] não consegui ler ${file} do Blob (${messageOf(error)})`);
+    }
+  }
   try {
-    const data = await fs.readFile(path.join(IMAGES_DIR, file));
-    return { data, type: MIME[file.split(".").pop() ?? ""] ?? "application/octet-stream" };
+    return { body: new Uint8Array(await fs.readFile(path.join(IMAGES_DIR, file))), type: typeOf(file), debug };
   } catch {
     return null;
   }
@@ -88,12 +154,7 @@ export async function readLocalImage(file: string): Promise<{ data: Buffer; type
 /** Na nuvem, sobe o print de uma leitura que falhou para dar para ver o que o navegador viu. */
 export async function uploadDebugFile(name: string, data: Buffer | string, contentType: string): Promise<string | null> {
   if (!blobEnabled()) return null;
-  const blob = await put(`garimpo/debug/${name}`, data, {
-    access: "public",
-    contentType,
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    cacheControlMaxAge: 60,
-  });
-  return blob.url;
+  const file = `debug-${name}`;
+  const { url, access } = await putBlob(BLOB_FOLDER + file, data, { contentType, maxAge: 60, overwrite: true });
+  return access === "public" ? url : ROUTE_PREFIX + file;
 }

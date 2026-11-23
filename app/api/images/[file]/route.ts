@@ -1,15 +1,18 @@
-import { readLocalImage } from "@/lib/store";
+import { readStoredFile } from "@/lib/store";
 
-/** Serve as fotos do modo local (pasta data/images). Na nuvem as fotos vêm direto do Vercel Blob. */
+/**
+ * Serve as fotos guardadas pelo app: do Vercel Blob privado (na nuvem) ou da pasta data/images (no PC).
+ * Fica atrás da senha, como o resto do app. Fotos de um Blob público abrem direto do Blob.
+ */
 export async function GET(_request: Request, { params }: { params: Promise<{ file: string }> }) {
   const { file } = await params;
-  const image = await readLocalImage(file);
-  if (!image) return new Response("Imagem não encontrada", { status: 404 });
-  return new Response(new Uint8Array(image.data), {
+  const stored = await readStoredFile(file);
+  if (!stored) return new Response("Imagem não encontrada", { status: 404 });
+  return new Response(stored.body, {
     headers: {
-      "Content-Type": image.type,
-      // O nome do arquivo muda quando a foto é trocada, então dá para guardar em cache para sempre.
-      "Cache-Control": "private, max-age=31536000, immutable",
+      "Content-Type": stored.type,
+      // O nome da foto muda quando ela é trocada, então dá para guardar em cache para sempre.
+      "Cache-Control": stored.debug ? "no-store" : "private, max-age=31536000, immutable",
     },
   });
 }
