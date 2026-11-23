@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { del, get, put } from "@vercel/blob";
-import { blobEnabled, onVercel } from "../env";
+import { blobCredentials, blobEnabled, onVercel } from "../env";
 import { IMAGES_DIR } from "../paths";
 import { DESKTOP_UA, messageOf } from "../scraper/extract";
 
@@ -40,6 +40,9 @@ function detectImageType(data: Buffer): string | null {
 // ---------------------------------------------------------------------------
 
 type Access = "public" | "private";
+
+/** Token clássico ou ID do store (OIDC), passados explicitamente para aceitar nomes com prefixo. */
+const auth = () => blobCredentials() ?? {};
 const globals = globalThis as typeof globalThis & { __garimpoBlobAccess?: Access };
 
 async function putBlob(
@@ -58,6 +61,7 @@ async function putBlob(
         addRandomSuffix: false,
         allowOverwrite: options.overwrite ?? false,
         cacheControlMaxAge: options.maxAge,
+        ...auth(),
       });
       globals.__garimpoBlobAccess = access;
       return { url: blob.url, access };
@@ -112,12 +116,12 @@ export async function removeImage(url: string | null): Promise<void> {
   if (!url) return;
   try {
     if (/\.blob\.vercel-storage\.com\//i.test(url)) {
-      if (blobEnabled()) await del(url);
+      if (blobEnabled()) await del(url, auth());
       return;
     }
     const file = url.startsWith(ROUTE_PREFIX) ? url.slice(ROUTE_PREFIX.length) : url;
     if (!IMAGE_FILE.test(file)) return;
-    if (blobEnabled()) await del(BLOB_FOLDER + file);
+    if (blobEnabled()) await del(BLOB_FOLDER + file, auth());
     await fs.rm(path.join(IMAGES_DIR, file), { force: true });
   } catch (error) {
     console.warn(`[garimpo] não consegui apagar a foto antiga (${messageOf(error)})`);
@@ -138,7 +142,7 @@ export async function readStoredFile(file: string): Promise<StoredFile | null> {
 
   if (blobEnabled()) {
     try {
-      const result = await get(blobTarget(BLOB_FOLDER + file), { access: "private" });
+      const result = await get(blobTarget(BLOB_FOLDER + file), { access: "private", ...auth() });
       if (result?.statusCode === 200) return { body: result.stream, type: result.blob.contentType || typeOf(file), debug };
     } catch (error) {
       console.warn(`[garimpo] não consegui ler ${file} do Blob (${messageOf(error)})`);

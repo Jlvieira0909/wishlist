@@ -17,8 +17,8 @@ export default function SetupNotice({ problems }: { problems: SetupProblem[] }) 
         )}
         {problems.includes("blob") && (
           <li>
-            <strong>Crie um Blob store</strong> e conecte ao projeto. Isso cria a variável <code>BLOB_READ_WRITE_TOKEN</code>,
-            onde as fotos ficam guardadas.
+            <strong>Crie um Blob store</strong> e conecte ao projeto, marcando o ambiente Production. Isso cria a variável{" "}
+            <code>BLOB_STORE_ID</code> (ou <code>BLOB_READ_WRITE_TOKEN</code>, em stores antigos), onde as fotos ficam guardadas.
           </li>
         )}
         <li>
