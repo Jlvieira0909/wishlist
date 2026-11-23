@@ -1,0 +1,3 @@
+# Seus itens, fotos e arquivos de depuração ficam só no seu computador.
+*
+!.gitignore

@@ -1,0 +1,30 @@
+{
+  "name": "wishlist",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "predev": "node scripts/check-deps.mjs",
+    "dev": "next dev",
+    "prebuild": "node scripts/check-deps.mjs",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@sparticuz/chromium": "^153.0.0",
+    "@vercel/blob": "^2.9.0",
+    "next": "16.4.6",
+    "playwright-core": "^1.65.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "redis": "^6.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.6",
+    "typescript": "^5"
+  }
+}
